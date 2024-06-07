@@ -1,6 +1,10 @@
 .venv
 frontend/node_modules
-report.aux
-report.log
-report.out
 backend/__pycache__/
+reports/report0.aux
+reports/report0.log
+reports/report0.out
+reports/Drafts.aux
+reports/Drafts.log
+reports/Drafts.out
+texput.log
