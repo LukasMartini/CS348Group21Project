@@ -24,8 +24,6 @@ def testQuery():
                        VALUES (1, 1, 1, 1, \'folds\', 0.01);''')
         cur.execute('''INSERT INTO player_cards(id, player_id, hand_id, hole_card1, hole_card2, position, stack_size)
                 VALUES (1, 1, 1, \'AC\', \'AS\', 1, 0.1);''')
-        cur.execute('''INSERT INTO player_cards(id, player_id, hand_id, hole_card1, hole_card2, position, stack_size)
-                       VALUES (1, 1, 1, \'AC\', \'AS\', 1, 0.1);''')
         cur.execute('''INSERT INTO board_cards(id, hand_id, flop_card1, flop_card2, flop_card3, turn_card, river_card)
                        VALUES (1, 1, \'AC\', \'2C\', \'3C\', \'4C\', \'TC\');''')
         
