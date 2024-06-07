@@ -173,7 +173,7 @@ def parse_hand_history(file_path):
                 player_name, amount = collect_match.groups()
                 print(player_name, amount)
 
-parse_hand_history("hand_histories/poker_stars/handHistory-126997.txt")
+# parse_hand_history("hand_histories/poker_stars/handHistory-126997.txt")
 
 cur.close()
 conn.close()

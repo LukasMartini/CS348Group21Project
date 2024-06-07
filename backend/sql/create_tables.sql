@@ -31,8 +31,8 @@ CREATE TABLE player_action (
 
 CREATE TABLE player_cards (
     id SERIAL PRIMARY KEY,
-    hand_id INT,
     player_id INT,
+    hand_id INT,
     hole_card1 CHAR(2),
     hole_card2 CHAR(2),
     position INT,
