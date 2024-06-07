@@ -1,3 +1,6 @@
+.venv
+frontend/node_modules
 report.aux
 report.log
 report.out
+backend/__pycache__/
