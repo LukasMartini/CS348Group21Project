@@ -18,6 +18,6 @@ def fetch_hand(hand_id: int, username: str, conn: psycopg2.connect) -> str:
 
     return output
 
+print(fetch_hand(1, 'Ted', get_db_connection()))
 fh_app.run()
-print(fetch_hand(2524, 'CashMatteo', get_db_connection())) # For testing purposes.
 
