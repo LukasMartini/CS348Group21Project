@@ -1,4 +1,3 @@
-import postgres
 from server import get_db_connection
 from convert_history import parse_hand_history
 import psycopg2 as pg2
