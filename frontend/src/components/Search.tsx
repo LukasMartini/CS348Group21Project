@@ -1,6 +1,7 @@
 "use client"
 import { useSearchParams, usePathname, useRouter} from "next/navigation"
 import { useState } from "react";
+import { Button } from "./ui/button";
 import HandCard from "@/components/HandCard";
 import 'dotenv/config'
 
@@ -41,8 +42,9 @@ const SearchBar = () => {
     //     }
     //   replace(`${pathname}?${params.toString()}`)
     }
-    return (
+    return ( // Insert Search Button, Implement hand info page, eventually add timeline.
         <div className="relative">
+            {/* <div style={{display: "inline-grid", gridTemplateColumns: "auto 1fr"}}> */}
                 <input 
                     className="peer block w-1/2 bg-[#2C2C2C] rounded-md border border-[#879195] py-[9px] pl-4 text-sm outline-2 placeholder:text-[#879195]"
                     placeholder="Search hands"
@@ -51,9 +53,12 @@ const SearchBar = () => {
                         handleSearch(e.target.value)
                     }}
                 />
+                <div className='py-4 w-full flex'>
+                    <Button type='submit'>Search</Button>
+                </div>
+            {/* </div> */}
             <div className="grid grid-cols-4 gap-12 pt-12">
                 {r1.map((info: any, index) => {
-                    // console.log(info);
                    return  <HandCard handId={info.id} played_at={info.played_at} tableName={info.table_name} key={index} />
                 })}
             </div>
