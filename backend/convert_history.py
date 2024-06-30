@@ -1,35 +1,10 @@
 import re
 from datetime import datetime
-from server import get_db_connection
 
-# Connect to the database
-conn = get_db_connection()
-cur = conn.cursor()
+from db_commands import create_action, create_board, create_hand, create_player, execute_query, get_or_create_cash_session, get_or_create_tournament_session, link_player_to_user, update_player_cards
 
-'''
-Hand #1: 
-
-PokerStars Hand #246222355402:  Hold'em No Limit ($0.01/$0.02 CAD) - 2023/09/27 22:56:41 ET
-Table 'Alya III' 6-max Seat #1 is the button
-Seat 1: HortonRoundtree ($1.86 in chips) 
-Seat 2: fourz4444 ($1.91 in chips) 
-Seat 3: CashMatteo ($2 in chips) 
-Seat 5: ljab26 ($2.96 in chips) 
-Seat 6: vegasricky ($1.56 in chips) 
-fourz4444: posts small blind $0.01
-CashMatteo: posts big blind $0.02
-bouchizzle: sits out 
-*** HOLE CARDS ***
-Dealt to CashMatteo [8c 3d]
-ljab26: raises $0.02 to $0.04
-vegasricky: folds 
-HortonRoundtree: folds 
-fourz4444: calls $0.03
-CashMatteo: folds 
-'''
-
-# Function to parse hand history
-def parse_hand_history(file_path):
+def parse_hand_history(file_path, user_id):
+    '''Populates the database with the hand history from the given file path. (PokerStars)'''
     with open(file_path, 'r') as file:
         content = file.read()
         
@@ -37,8 +12,6 @@ def parse_hand_history(file_path):
     hands[0] = hands[0].replace('\nHand #', 'Hand #')
     
     for hand in hands:
-        print("\n\n\n\n")
-        
         lines = hand.split('\n')
         
         if "*** HOLE CARDS ***" not in lines:
@@ -51,13 +24,13 @@ def parse_hand_history(file_path):
             game_type = "Tournament"
             
             if "Freeroll" in lines[2]:
-                tournament_id, level, datetime_str = re.search(
+                tournament_id, tournament_level, datetime_str = re.search(
                     r"Tournament #(\d+), Freeroll\s+Hold'em No Limit - Level (.*?) - (.*)",
                     lines[2]
                     ).groups()
-                buy_in = "$0.00+$0.00 NA"
+                stakes = "$0.00+$0.00 NA"
             else:
-                tournament_id, buy_in, level, datetime_str = re.search(
+                tournament_id, stakes, tournament_level, datetime_str = re.search(
                     r"Tournament #(\d+), (\$\d+\.\d+\+\$\d+\.\d+ .*) Hold'em No Limit - Level (.*?) - (.*)", 
                     lines[2]
                     ).groups()
@@ -71,109 +44,168 @@ def parse_hand_history(file_path):
         datetime_obj = datetime.strptime(datetime_str, "%Y/%m/%d %H:%M:%S ET")
         table_name, table_size, button_seat = re.search(r"Table '(.+)' (\d+)-max Seat #(\d+) is the button", lines[3]).groups()
         total_pot, rake = re.search(r"Total pot \$?([\d.]+)(?:.*)\| Rake \$?([\d.]+)", lines[lines.index("*** SUMMARY ***") + 1]).groups()
-
-        if game_type == "Cash":
-            print(hand_num, pokerstars_id, game_type, stakes, datetime_obj, table_name, table_size, button_seat)
-        else:
-            print(hand_num, pokerstars_id, game_type, tournament_id, buy_in, level, datetime_obj, table_name, table_size, button_seat)
         
-        print("-"*80)
+        if game_type == "Cash":
+            small_blind, part = stakes.replace('$', '').split('/')
+            big_blind, currency = part.split()
+            
+            session_id = get_or_create_cash_session(user_id, table_name, game_type, currency, table_size, datetime_obj)
+            hand_id = create_hand(session_id, pokerstars_id, small_blind, big_blind, total_pot, rake, datetime_obj)
+        else:
+            buy_in , part = stakes.replace('$', '').split('+')
+            rake, currency = part.split()
+            total_buy_in = float(buy_in) + float(rake)
+            
+            level, small_blind, big_blind = re.search(r"(\w+)\s*\((\d+)/(\d+)\)", tournament_level).groups()            
+            session_id = get_or_create_tournament_session(user_id, tournament_id, total_buy_in, table_name, game_type, currency, table_size, datetime_obj)
+            hand_id = create_hand(session_id, pokerstars_id, small_blind, big_blind, total_pot, rake, datetime_obj)
         
         seat_pattern = re.compile(r"Seat (\d+): ([^:]+) \(\$?([\d.]+) in chips\)")
         blind_pattern = re.compile(r"([^:]+): posts (?:small blind|big blind) \$?([\d.]+)")
+        
         for line in lines[4:]:
             if "*** HOLE CARDS ***" in line:
                 break
+            
             seat_match = seat_pattern.match(line)
             if seat_match:
-                seat_num, player_name, stack = seat_match.groups()
-                print(seat_num, player_name, stack)
+                seat_num, player_name, stack = seat_match.groups()                
+                create_player(hand_id, player_name, seat_num, stack)
                 
             blind_match = blind_pattern.match(line)
             if blind_match:
                 player_name, amount = blind_match.groups()
-                print(player_name, amount)
+                create_action(hand_id, player_name, "Preflop", "ante", amount)
         
-        print("Preflop", "-"*20)
-        
+        dealt_to_pattern = re.compile(r"Dealt to ([^:]+) \[(\w{2}) (\w{2})\]")
         raise_pattern = re.compile(r"([^:]+): raises \$?([\d.]+) to \$?([\d.]+)")
         action_pattern = re.compile(r"([^:]+): (calls|folds|checks|bets) \$?([\d.]+)?")
+        collect_pattern = re.compile(r"([^:]+) collected \$?([\d.]+) from pot")
+        
         for line in lines[lines.index("*** HOLE CARDS ***") + 1:]:
-            if "*** FLOP ***" in line:
+            if "*** FLOP ***" in line or "*** SUMMARY ***" in line:
                 break
+            
+            dealt_to_match = dealt_to_pattern.match(line)
+            if dealt_to_match:
+                player_name, card1, card2 = dealt_to_match.groups()
+                update_player_cards(hand_id, player_name, (card1, card2))
+                link_player_to_user(player_name, user_id)
+            
             action_match = action_pattern.match(line)
             if action_match:
                 player_name, action, amount = action_match.groups()
-                print(player_name, action, amount)
+                create_action(hand_id, player_name, "Preflop", action, amount)
+            
+            raise_match = raise_pattern.match(line)
+            if raise_match:
+                player_name, inital_amount, total = raise_match.groups()
+                amount_raised = float(total) - float(inital_amount)
+                create_action(hand_id, player_name, "Preflop", "raise", amount_raised)
+            
+            collect_match = collect_pattern.match(line)
+            if collect_match:
+                player_name, amount = collect_match.groups()
+                create_action(hand_id, player_name, "Preflop", "collect", amount)
         
         if not any("*** FLOP ***" in line for line in lines):
+            create_board(hand_id)
             continue
-        print("Flop", "-"*20)
         
         flop_index = next(i for i, line in enumerate(lines) if "*** FLOP ***" in line)
         flop_cards = re.search(r"\*\*\* FLOP \*\*\* \[(\w{2}) (\w{2}) (\w{2})\]", lines[flop_index]).groups()
-        print(flop_cards)
         
         for line in lines[flop_index + 1:]:
-            if "*** TURN ***" in line:
+            if "*** TURN ***" in line or "*** SUMMARY ***" in line:
                 break
+            
             action_match = action_pattern.match(line)
             if action_match:
                 player_name, action, amount = action_match.groups()
-                print(player_name, action, amount)
+                create_action(hand_id, player_name, "Flop", action, amount)
+            
+            raise_match = raise_pattern.match(line)
+            if raise_match:
+                player_name, inital_amount, total = raise_match.groups()
+                amount_raised = float(total) - float(inital_amount)
+                create_action(hand_id, player_name, "Flop", "raise", amount_raised)
+            
+            collect_match = collect_pattern.match(line)
+            if collect_match:
+                player_name, amount = collect_match.groups()
+                create_action(hand_id, player_name, "Flop", "collect", amount)
         
         if not any("*** TURN ***" in line for line in lines):
+            create_board(hand_id, flop_cards)
             continue
-        print("Turn", "-"*20)
         
         turn_index = next(i for i, line in enumerate(lines) if "*** TURN ***" in line)
         turn_card = re.search(r"\*\*\* TURN \*\*\* \[\w{2} \w{2} \w{2}\] \[(\w{2})\]", lines[turn_index]).group(1)
-        print(turn_card)
         
         for line in lines[turn_index + 1:]:
-            if "*** RIVER ***" in line:
+            if "*** RIVER ***" in line or "*** SUMMARY ***" in line:
                 break
+            
             action_match = action_pattern.match(line)
             if action_match:
                 player_name, action, amount = action_match.groups()
-                print(player_name, action, amount)
+                create_action(hand_id, player_name, "Turn", action, amount)
+            
+            raise_match = raise_pattern.match(line)
+            if raise_match:
+                player_name, inital_amount, total = raise_match.groups()
+                amount_raised = float(total) - float(inital_amount)
+                create_action(hand_id, player_name, "Turn", "raise", amount_raised)
+            
+            collect_match = collect_pattern.match(line)
+            if collect_match:
+                player_name, amount = collect_match.groups()
+                create_action(hand_id, player_name, "Turn", "collect", amount)
         
         if not any("*** RIVER ***" in line for line in lines):
+            create_board(hand_id, flop_cards, turn_card)
             continue
-        print("River", "-"*20)
         
         river_index = next(i for i, line in enumerate(lines) if "*** RIVER ***" in line)
         river_card = re.search(r"\*\*\* RIVER \*\*\* \[\w{2} \w{2} \w{2} \w{2}\] \[(\w{2})\]", lines[river_index]).group(1)
-        print(river_card)
         
         for line in lines[river_index + 1:]:
-            if "*** SHOW DOWN ***" in line:
+            if "*** SHOW DOWN ***" in line or "*** SUMMARY ***" in line:
                 break
+            
             action_match = action_pattern.match(line)
             if action_match:
                 player_name, action, amount = action_match.groups()
-                print(player_name, action, amount)
-        
-        if not any("*** SHOW DOWN ***" in line for line in lines):
-            continue
-        print("Showdown", "-"*20)
-        showdown_index = next(i for i, line in enumerate(lines) if "*** SHOW DOWN ***" in line)
-        show_pattern = re.compile(r"([^:]+): shows \[(\w{2}) (\w{2})\] \(.+\)")
-        collect_pattern = re.compile(r"([^:]+) collected \$?([\d.]+) from pot")
-        for line in lines[showdown_index + 1:]:
-            if "*** SUMMARY ***" in line:
-                break
-            show_match = show_pattern.match(line)
-            if show_match:
-                player_name, *hand = show_match.groups()
-                print(player_name, hand)
+                create_action(hand_id, player_name, "River", action, amount)
+                
+            raise_match = raise_pattern.match(line)
+            if raise_match:
+                player_name, inital_amount, total = raise_match.groups()
+                amount_raised = float(total) - float(inital_amount)
+                create_action(hand_id, player_name, "River", "raise", amount_raised)
                 
             collect_match = collect_pattern.match(line)
             if collect_match:
                 player_name, amount = collect_match.groups()
-                print(player_name, amount)
-
-# parse_hand_history("hand_histories/poker_stars/handHistory-126997.txt")
-
-cur.close()
-conn.close()
+                create_action(hand_id, player_name, "River", "collect", amount)
+        
+        if not any("*** SHOW DOWN ***" in line for line in lines):
+            create_board(hand_id, flop_cards, turn_card, river_card)
+            continue
+        
+        showdown_index = next(i for i, line in enumerate(lines) if "*** SHOW DOWN ***" in line)
+        show_pattern = re.compile(r"([^:]+): shows \[(\w{2}) (\w{2})\] \(.+\)")
+        
+        for line in lines[showdown_index + 1:]:
+            if "*** SUMMARY ***" in line:
+                break
+            
+            show_match = show_pattern.match(line)
+            if show_match:
+                player_name, *hand = show_match.groups()
+                update_player_cards(hand_id, player_name, hand)
+                
+            collect_match = collect_pattern.match(line)
+            if collect_match:
+                player_name, amount = collect_match.groups()
+                create_action(hand_id, player_name, "Showdown", "collect", amount)
